@@ -1,0 +1,35 @@
+# Python compiled bytecode
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables
+.env
+.venv
+
+# IDE files
+.vscode/
+.idea/
+
+# Project specific
+temp/
+venv/
+models/
+*.wav
+*.mp3
+yolov8n.pt
