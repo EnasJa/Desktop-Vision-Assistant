@@ -24,8 +24,8 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Get from environment variable
 
 # Speech recognition settings
-RECORDING_DURATION = 5  # seconds
-SAMPLE_RATE = 16000
+RECORDING_DURATION = 3  # הקטן לקטעים קצרים יותר
+SAMPLE_RATE = 44100     # הגדל את איכות ההקלטה
 
 # Vision settings
 YOLO_MODEL = "yolov8n.pt"  # Nano model (smallest and fastest)

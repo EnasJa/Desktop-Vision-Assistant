@@ -72,43 +72,63 @@ class SpeechRecognizer:
                     self.transcription_queue.put(transcription)
             time.sleep(0.1)  # Small delay to prevent CPU overload
             
-    def _record_audio(self, duration=5):
-        """Record audio for a specific duration"""
+    def _record_audio(self, duration=3):
+        """Record audio for a specific duration with noise reduction"""
         try:
-            # Record audio
             logger.debug(f"Recording {duration} seconds of audio")
+            
+            # Record with higher quality settings
             audio_data = sd.rec(
                 int(duration * SAMPLE_RATE),
                 samplerate=SAMPLE_RATE,
                 channels=1,
-                dtype='float32'
+                dtype='float32',
+                device=None,  # Use default device
+                blocking=True  # Ensure complete recording
             )
-            sd.wait()  # Wait until recording is finished
+            
+            # Simple noise gate - remove very quiet sounds
+            threshold = 0.01
+            audio_data[np.abs(audio_data) < threshold] = 0
+            
+            # Check if audio has meaningful content
+            if np.max(np.abs(audio_data)) < 0.005:
+                logger.debug("Audio too quiet, skipping")
+                return None
+                
             return audio_data
         except Exception as e:
             logger.error(f"Error recording audio: {e}")
             return None
             
     def _transcribe_audio(self, audio_data):
-        """Transcribe audio data using OpenAI API"""
+        """Transcribe audio data using OpenAI API with enhanced settings"""
         try:
-            # Save audio to temporary file
+            # Save audio to temporary file with higher quality
             temp_file = os.path.join(TEMP_DIR, f"recording_{int(time.time())}.wav")
-            sf.write(temp_file, audio_data, SAMPLE_RATE)
             
-            # Transcribe with OpenAI API
+            # Normalize audio to improve quality
+            audio_data = audio_data / np.max(np.abs(audio_data))
+            
+            # Save with higher quality settings
+            sf.write(temp_file, audio_data, SAMPLE_RATE, subtype='PCM_16')
+            
+            # Transcribe with OpenAI API with enhanced parameters
             logger.debug(f"Transcribing audio file: {temp_file}")
             
             with open(temp_file, "rb") as audio_file:
                 response = self.client.audio.transcriptions.create(
                     model="whisper-1",
-                    file=audio_file
+                    file=audio_file,
+                    language="en",  # Specify language for better accuracy
+                    prompt="This is a voice command for a desktop vision assistant.",  # Context helps
+                    temperature=0.1  # Lower temperature for more consistent results
                 )
             
             # Clean up temp file
             os.remove(temp_file)
             
-            return response.text
+            return response.text.strip()
         except Exception as e:
             logger.error(f"Error transcribing audio: {e}")
             return ""
