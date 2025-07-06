@@ -33,3 +33,4 @@ models/
 *.wav
 *.mp3
 yolov8n.pt
+.DS_Store/

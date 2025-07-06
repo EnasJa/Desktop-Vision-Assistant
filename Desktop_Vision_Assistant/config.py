@@ -24,19 +24,25 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Get from environment variable
 
 # Speech recognition settings
-RECORDING_DURATION = 3  # הקטן לקטעים קצרים יותר
-SAMPLE_RATE = 44100     # הגדל את איכות ההקלטה
+RECORDING_DURATION = 5  # seconds
+SAMPLE_RATE = 16000
 
 # Vision settings
 YOLO_MODEL = "yolov8n.pt"  # Nano model (smallest and fastest)
 CONFIDENCE_THRESHOLD = 0.5
 MAX_DETECTIONS = 20
 
-# NLP settings
-NLP_MODEL = "gpt2"  # Default model, can be changed to other Hugging Face models
+# NLP settings - Conversational Models (no sentencepiece required)
+# Options for conversational models that work without build issues:
+# "microsoft/DialoGPT-medium" - Good for conversations, 400MB
+# "microsoft/DialoGPT-small" - Smaller version, 150MB  
+# "gpt2" - Simple and reliable, 500MB
+# "distilgpt2" - Smaller GPT-2, 350MB
+
+NLP_MODEL = "microsoft/DialoGPT-medium"  # Default conversational model
 
 # GUI settings
-WINDOW_TITLE = "Desktop Vision Assistant"
+WINDOW_TITLE = "Desktop Vision Assistant " #with LLaMA
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
 CAMERA_WIDTH = 640

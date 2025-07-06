@@ -16,5 +16,9 @@ soundfile>=0.12.1
 # Computer vision
 ultralytics>=8.0.0  # YOLOv8
 
-# Basic NLP (simplified to avoid build issues)
+# NLP with conversational models (without sentencepiece)
+torch>=2.0.0
 transformers>=4.30.0
+accelerate>=0.20.0
+protobuf>=3.20.0
+

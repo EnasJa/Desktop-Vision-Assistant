@@ -109,6 +109,9 @@ def main():
         logger.info(f"Initializing NLP Processor with model: {args.nlp_model}")
         nlp_processor = NLPProcessor()
         
+        # Connect NLP processor with vision processor for zoom control
+        nlp_processor.set_vision_processor(vision_processor)
+        
         # Start GUI
         logger.info("Starting GUI")
         run_gui(speech_recognizer, vision_processor, nlp_processor)

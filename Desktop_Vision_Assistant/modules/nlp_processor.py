@@ -2,24 +2,59 @@ import logging
 import threading
 import time
 from queue import Queue
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+import torch
 
 from config import NLP_MODEL
 
 logger = logging.getLogger(__name__)
 
 class NLPProcessor:
-    def __init__(self, model_name=NLP_MODEL):
-        logger.info(f"Initializing NLP processor with model: {model_name}")
+    def __init__(self, model_name="microsoft/DialoGPT-medium"):  # Default to a model that works without sentencepiece
+        logger.info(f"Initializing NLP processor with conversational model: {model_name}")
         self.model_name = model_name
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Using device: {self.device}")
         
-        # For text generation (simplified to avoid dependencies)
+        # Use models that don't require sentencepiece:
+        # "microsoft/DialoGPT-medium" - Good for conversations
+        # "microsoft/DialoGPT-small" - Smaller version
+        # "facebook/blenderbot-400M-distill" - Alternative (but might need sentencepiece)
+        # "gpt2" - Simple and reliable
+        
         try:
-            self.generator = pipeline('text-generation', model=model_name)
-            logger.info("Successfully loaded text generation model")
+            logger.info("Loading tokenizer and model...")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            
+            # Add padding token if it doesn't exist
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            
+            # Load model with appropriate settings
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                low_cpu_mem_usage=True
+            )
+            
+            if self.device == "cpu":
+                self.model = self.model.to(self.device)
+            
+            # Create text generation pipeline
+            self.generator = pipeline(
+                'text-generation',
+                model=self.model,
+                tokenizer=self.tokenizer,
+                device=0 if self.device == "cuda" else -1,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+            )
+            
+            logger.info("Conversational model loaded successfully!")
         except Exception as e:
-            logger.warning(f"Could not load text generation model: {e}")
-            logger.info("Using simplified text processing instead")
+            logger.error(f"Error loading conversational model: {e}")
+            logger.info("Falling back to simplified text processing")
+            self.model = None
+            self.tokenizer = None
             self.generator = None
         
         # For command processing
@@ -34,7 +69,8 @@ class NLPProcessor:
             "count": {"keywords": ["count", "how many"], "action": "count_objects"},
             "describe": {"keywords": ["describe", "tell", "about", "scene"], "action": "describe_scene"},
             "find": {"keywords": ["find", "locate", "where", "is"], "action": "find_object"},
-            "track": {"keywords": ["track", "follow"], "action": "track_object"}
+            "track": {"keywords": ["track", "follow"], "action": "track_object"},
+            "chat": {"keywords": ["chat", "talk", "conversation"], "action": "general_chat"}
         }
         
     def start(self):
@@ -81,14 +117,14 @@ class NLPProcessor:
     def _parse_command(self, text):
         """Parse command text and determine action"""
         logger.info(f"Parsing command: {text}")
-        text = text.lower()
+        text_lower = text.lower()
         
         # Check for command matches
         best_match = None
         best_score = 0
         
         for cmd_name, cmd_data in self.commands.items():
-            score = sum([1 for keyword in cmd_data["keywords"] if keyword in text])
+            score = sum([1 for keyword in cmd_data["keywords"] if keyword in text_lower])
             if score > best_score:
                 best_score = score
                 best_match = cmd_data["action"]
@@ -98,12 +134,12 @@ class NLPProcessor:
             return {
                 "action": best_match,
                 "original_text": text,
-                "params": self._extract_params(text, best_match)
+                "params": self._extract_params(text_lower, best_match)
             }
         else:
-            logger.info("No command matched, treating as general query")
+            logger.info("No specific command matched, treating as general chat")
             return {
-                "action": "general_query",
+                "action": "general_chat",
                 "original_text": text,
                 "params": {"query": text}
             }
@@ -153,26 +189,59 @@ class NLPProcessor:
             # No specific parameters needed
             pass
             
+        elif action == "general_chat":
+            params["query"] = text
+            
         return params
         
-    def generate_text(self, prompt, max_length=100):
-        """Generate text based on a prompt"""
+    def generate_llama_response(self, prompt, max_length=150):
+        """Generate response using LLaMA model"""
         try:
-            if self.generator:
-                logger.info(f"Generating text for prompt: {prompt}")
-                generated = self.generator(prompt, max_length=max_length, num_return_sequences=1)
-                return generated[0]['generated_text']
-            else:
-                # Simple text generation fallback
-                logger.info("Using simplified text generation")
-                return f"{prompt} (simplified response)"
+            if self.generator is None:
+                return f"I understand you said: '{prompt}'. However, the AI model is not available right now."
+            
+            logger.info(f"Generating LLaMA response for: {prompt}")
+            
+            # Format prompt for better conversation
+            formatted_prompt = f"Human: {prompt}\nAssistant:"
+            
+            # Generate response
+            outputs = self.generator(
+                formatted_prompt,
+                max_length=max_length,
+                num_return_sequences=1,
+                temperature=0.7,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
+            )
+            
+            # Extract the generated text
+            generated_text = outputs[0]['generated_text']
+            
+            # Remove the prompt from the response
+            response = generated_text.replace(formatted_prompt, "").strip()
+            
+            # Clean up the response
+            if response.startswith("Assistant:"):
+                response = response[10:].strip()
+            
+            # Limit response length and clean up
+            response = response.split('\n')[0]  # Take first line only
+            response = response[:200]  # Limit length
+            
+            return response if response else "I'm here to help you with vision-related tasks."
+            
         except Exception as e:
-            logger.error(f"Error generating text: {e}")
-            return prompt
+            logger.error(f"Error generating LLaMA response: {e}")
+            return f"I understand your message: '{prompt}'. How can I help you with vision analysis?"
             
     def format_detection_response(self, detections, action, params=None):
         """Format the detection results into a natural language response"""
         if not detections:
+            if action == "general_chat":
+                query = params.get("query", "") if params else ""
+                return self.generate_llama_response(f"{query}. Currently, I don't see any objects in the camera view.")
             return "I don't see any objects in the current view."
             
         if action == "identify_objects":
@@ -252,11 +321,7 @@ class NLPProcessor:
             return f"I found a {obj['class_name']} in the {position} of the view."
             
         elif action == "describe_scene":
-            # Generate a description of the scene
-            if len(detections) == 0:
-                return "I don't see any objects to describe."
-                
-            # Count objects by type
+            # Generate a description of the scene using LLaMA
             object_counts = {}
             for det in detections:
                 class_name = det['class_name']
@@ -264,21 +329,16 @@ class NLPProcessor:
                     object_counts[class_name] += 1
                 else:
                     object_counts[class_name] = 1
-                    
-            # Create scene description
-            description = "I can see "
-            items = []
             
+            objects_list = []
             for obj, count in object_counts.items():
                 if count > 1:
-                    items.append(f"{count} {obj}s")
+                    objects_list.append(f"{count} {obj}s")
                 else:
-                    items.append(f"a {obj}")
-                    
-            description += ", ".join(items)
-            description += " in the current scene."
+                    objects_list.append(f"a {obj}")
             
-            return description
+            scene_prompt = f"I can see {', '.join(objects_list)} in the scene. Please describe what this scene might be."
+            return self.generate_llama_response(scene_prompt)
             
         elif action == "track_object":
             # Provide info for tracking a specific object
@@ -315,21 +375,30 @@ class NLPProcessor:
                 
             return f"Now tracking the {obj['class_name']} in the {position} of the view."
             
-        else:  # General query or unknown action
+        elif action == "general_chat":
+            # Use LLaMA for general conversation
+            query = params.get("query", "") if params else ""
+            
+            # Include information about what's visible
+            object_names = [det['class_name'] for det in detections]
+            unique_objects = list(set(object_names))
+            
+            context_prompt = f"{query}. For context, I can currently see these objects in the camera: {', '.join(unique_objects)}."
+            return self.generate_llama_response(context_prompt)
+            
+        else:  # Unknown action
             return "I'm not sure how to respond to that command with the current view."
 
 
-# Simple test function
-def test_nlp_processor():
+# Test function for LLaMA integration
+def test_llama_nlp():
     nlp = NLPProcessor()
     
-    # Test command parsing
     test_commands = [
-        "What objects do you see?",
-        "Count how many people are there",
-        "Describe the scene",
-        "Find the book",
-        "Track the car"
+        "What do you see?",
+        "Tell me about the scene",
+        "How are you today?",
+        "What's the weather like?"
     ]
     
     for cmd in test_commands:
@@ -338,28 +407,14 @@ def test_nlp_processor():
         print(f"  Action: {result['action']}")
         print(f"  Params: {result['params']}")
         
-    # Test response formatting
-    test_detections = [
-        {'class_id': 0, 'class_name': 'person', 'confidence': 0.9, 'bbox': [100, 150, 200, 300]},
-        {'class_id': 0, 'class_name': 'person', 'confidence': 0.85, 'bbox': [300, 200, 400, 350]},
-        {'class_id': 2, 'class_name': 'car', 'confidence': 0.7, 'bbox': [50, 50, 150, 100]},
-        {'class_id': 62, 'class_name': 'chair', 'confidence': 0.65, 'bbox': [400, 300, 450, 400]}
-    ]
-    
-    for cmd in test_commands:
-        result = nlp._parse_command(cmd)
-        response = nlp.format_detection_response(
-            test_detections, 
-            result['action'], 
-            result['params']
-        )
-        print(f"Command: '{cmd}'")
-        print(f"  Response: {response}")
+        if result['action'] == 'general_chat':
+            response = nlp.generate_llama_response(cmd)
+            print(f"  LLaMA Response: {response}")
         print()
 
 
 if __name__ == "__main__":
     # Set up logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    # Test the NLP processor
-    test_nlp_processor()
+    # Test the LLaMA NLP processor
+    test_llama_nlp()
